@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RSA Network Inspector</string>
+    <string name="address_bar_hint">https://www.myroadsafety.ie/</string>
+    <string name="action_go">Go</string>
+    <string name="action_back">Back</string>
+    <string name="action_forward">Forward</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_clear_log">Clear Log</string>
+    <string name="action_export_log">Export Log</string>
+    <string name="action_copy_log">Copy Log</string>
+    <string name="log_panel_title_expanded">NETWORK / WEBVIEW LOG  ▾</string>
+    <string name="log_panel_title_collapsed">NETWORK / WEBVIEW LOG  ▸</string>
+    <string name="filter_all">ALL</string>
+    <string name="filter_api">API</string>
+    <string name="filter_fetch_xhr">FETCH/XHR</string>
+    <string name="filter_document">DOCUMENT</string>
+    <string name="filter_rsa_only">RSA ONLY</string>
+    <string name="search_hint">Search log (e.g. availability)</string>
+    <string name="restriction_warning">RSA ACCESS RESTRICTION DETECTED — STOP TESTING</string>
+</resources>
