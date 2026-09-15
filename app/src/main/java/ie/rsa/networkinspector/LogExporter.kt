@@ -63,12 +63,37 @@ object LogExporter {
             obj.put("time", a.formattedTime())
             obj.put("method", a.method)
             obj.put("sanitizedUrl", a.sanitizedUrl)
+            obj.put("endpointGroup", a.endpointGroup)
             obj.put("status", a.status)
             obj.put("contentType", a.contentType)
             obj.put("responseBody", a.prettyBody)
+            obj.put("parserStatus", a.parserStatus.name)
+            obj.put("isCentreListResponse", a.isCentreListResponse)
             obj.put("slotCount", a.slotCount ?: JSONObject.NULL)
             obj.put("detectedFields", JSONArray(a.detectedFields))
             obj.put("timerValueSeconds", a.timerValueSeconds ?: JSONObject.NULL)
+
+            val centresArray = JSONArray()
+            a.parsedCentres.forEach { c ->
+                val cObj = JSONObject()
+                cObj.put("id", c.id)
+                cObj.put("name", c.name)
+                cObj.put("nextAvailability", c.nextAvailability ?: JSONObject.NULL)
+                cObj.put("hasGenuineDate", c.hasGenuineDate)
+                centresArray.put(cObj)
+            }
+            obj.put("centres", centresArray)
+
+            val slotsArray = JSONArray()
+            a.parsedSlots.forEach { s ->
+                val sObj = JSONObject()
+                sObj.put("centre", s.centre)
+                sObj.put("date", s.date)
+                sObj.put("time", s.time)
+                slotsArray.put(sObj)
+            }
+            obj.put("realSlots", slotsArray)
+
             availArray.put(obj)
         }
         root.put("availabilityResponses", availArray)

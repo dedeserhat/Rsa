@@ -56,6 +56,7 @@ class MainActivity : Activity() {
     private lateinit var filterRsa: Button
     private lateinit var tabLogButton: Button
     private lateinit var tabAvailabilityButton: Button
+    private lateinit var tabCentresButton: Button
     private lateinit var tabSlotsButton: Button
     private lateinit var tabDebugButton: Button
     private lateinit var authTestButton: Button
@@ -68,14 +69,23 @@ class MainActivity : Activity() {
     private val adapter by lazy { LogAdapter(this) }
     private val availabilityAdapter by lazy { AvailabilityAdapter(this) }
     private val slotAdapter by lazy { SlotAdapter(this) }
-    private val slotFingerprintStore by lazy { SlotFingerprintStore(this) }
+    private val centreAdapter by lazy { CentreAdapter(this) }
+    private val slotFingerprintStore by lazy { SlotFingerprintStore(this, "notified_slot_fingerprints") }
+    private val centreFingerprintStore by lazy { SlotFingerprintStore(this, "notified_centre_fingerprints") }
     private val allEntries = mutableListOf<LogEntry>()
     private val availabilityEntries = mutableListOf<AvailabilityResponseEntry>()
 
-    /** Slots parsed from the most recently observed slot-list-shaped response only -
+    /** Slots/centres parsed from the most recently observed response of each shape -
      *  a snapshot of "what the last manual check showed", not accumulated history. */
     private var currentSlots: List<DrivingTestSlot> = emptyList()
     private var currentParserStatus: ParserStatus = ParserStatus.NOT_APPLICABLE
+    private var currentCentres: List<TestCentreStatus> = emptyList()
+
+    /** Count of captured Availability responses per endpoint group, for the DEBUG tab. */
+    private val endpointGroupCounts = linkedMapOf(
+        "ByWorkOrderAndTerritory" to 0, "ClosestSimpleByWorkOrder" to 0,
+        "slots" to 0, "All" to 0, "Other" to 0
+    )
 
     // Debug-tab state - never includes headers/cookies/tokens, only what's already
     // shown elsewhere in sanitized form.
@@ -94,7 +104,7 @@ class MainActivity : Activity() {
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     private enum class FilterMode { ALL, API, FETCH_XHR, DOCUMENT, RSA_ONLY }
-    private enum class ViewMode { LOG, AVAILABILITY, SLOTS, DEBUG }
+    private enum class ViewMode { LOG, AVAILABILITY, CENTRES, SLOTS, DEBUG }
     private var currentFilter = FilterMode.ALL
     private var currentMode = ViewMode.LOG
     private var searchQuery: String = ""
@@ -140,6 +150,7 @@ class MainActivity : Activity() {
         filterRsa = findViewById(R.id.filterRsa)
         tabLogButton = findViewById(R.id.tabLogButton)
         tabAvailabilityButton = findViewById(R.id.tabAvailabilityButton)
+        tabCentresButton = findViewById(R.id.tabCentresButton)
         tabSlotsButton = findViewById(R.id.tabSlotsButton)
         tabDebugButton = findViewById(R.id.tabDebugButton)
         authTestButton = findViewById(R.id.authTestButton)
@@ -305,6 +316,7 @@ class MainActivity : Activity() {
 
         tabLogButton.setOnClickListener { switchMode(ViewMode.LOG) }
         tabAvailabilityButton.setOnClickListener { switchMode(ViewMode.AVAILABILITY) }
+        tabCentresButton.setOnClickListener { switchMode(ViewMode.CENTRES) }
         tabSlotsButton.setOnClickListener { switchMode(ViewMode.SLOTS) }
         tabDebugButton.setOnClickListener { switchMode(ViewMode.DEBUG) }
         authTestButton.setOnClickListener { showAuthTestInstructions() }
@@ -324,6 +336,7 @@ class MainActivity : Activity() {
             val text = when (currentMode) {
                 ViewMode.LOG -> adapter.getItem(position).url
                 ViewMode.AVAILABILITY -> availabilityAdapter.getItem(position).sanitizedUrl
+                ViewMode.CENTRES -> centreAdapter.getItem(position).displayText()
                 ViewMode.SLOTS -> slotAdapter.getItem(position).displayText()
                 ViewMode.DEBUG -> return@OnItemClickListener
             }
@@ -346,6 +359,10 @@ class MainActivity : Activity() {
                 logListView.adapter = availabilityAdapter
                 refreshAvailabilityList()
             }
+            ViewMode.CENTRES -> {
+                logListView.adapter = centreAdapter
+                refreshCentreList()
+            }
             ViewMode.SLOTS -> {
                 logListView.adapter = slotAdapter
                 refreshSlotList()
@@ -356,6 +373,10 @@ class MainActivity : Activity() {
 
     private fun refreshSlotList() {
         slotAdapter.setItems(currentSlots)
+    }
+
+    private fun refreshCentreList() {
+        centreAdapter.setItems(currentCentres)
     }
 
     private fun showAuthTestInstructions() {
@@ -520,21 +541,31 @@ class MainActivity : Activity() {
             }
         }
 
-        if (entry.isSlotListResponse) {
+        if (entry.isAvailabilityFamilyResponse) {
+            endpointGroupCounts[entry.endpointGroup] = (endpointGroupCounts[entry.endpointGroup] ?: 0) + 1
             currentParserStatus = entry.parserStatus
             when (entry.parserStatus) {
                 ParserStatus.PARSED -> {
-                    currentSlots = entry.parsedSlots
                     if (status in 200..299) lastSuccessfulCheckAt = timestamp
-                    notifyNewSlots(currentSlots)
+                    if (entry.isCentreListResponse) {
+                        // Centres (e.g. ByWorkOrderAndTerritory, ClosestSimpleByWorkOrder) are
+                        // never counted or notified as appointment slots.
+                        currentCentres = entry.parsedCentres
+                        notifyNewCentres(currentCentres)
+                        if (currentMode == ViewMode.CENTRES) refreshCentreList()
+                    } else {
+                        // Only a genuinely non-centre-shaped response can populate REAL slots.
+                        currentSlots = entry.parsedSlots
+                        notifyNewSlots(currentSlots)
+                        if (currentMode == ViewMode.SLOTS) refreshSlotList()
+                    }
                 }
                 ParserStatus.UNRECOGNIZED_FORMAT -> {
-                    // Fail-safe: never let an unparseable response read as "no slots".
-                    Log.w(TAG, "Slot parser could not recognize response format for $url")
+                    // Fail-safe: never let an unparseable response read as "no slots"/"no centres".
+                    Log.w(TAG, "Parser could not recognize response format for $url")
                 }
                 ParserStatus.NOT_APPLICABLE -> {}
             }
-            if (currentMode == ViewMode.SLOTS) refreshSlotList()
         }
 
         if (currentMode == ViewMode.AVAILABILITY) {
@@ -550,6 +581,18 @@ class MainActivity : Activity() {
             if (!slotFingerprintStore.hasNotified(slot.fingerprint)) {
                 NotificationHelper.notifySlotFound(this, slot)
                 slotFingerprintStore.markNotified(slot.fingerprint)
+            }
+        }
+    }
+
+    /** Notifies only for centres whose nextAvailability is a genuine (non-sentinel) date;
+     *  dedup key is centre id + nextAvailability, so a later/earlier date re-notifies. */
+    private fun notifyNewCentres(centres: List<TestCentreStatus>) {
+        for (centre in centres) {
+            if (!centre.hasGenuineDate) continue
+            if (!centreFingerprintStore.hasNotified(centre.fingerprint)) {
+                NotificationHelper.notifyCentreAvailability(this, centre)
+                centreFingerprintStore.markNotified(centre.fingerprint)
             }
         }
     }
@@ -583,7 +626,7 @@ class MainActivity : Activity() {
         }
         val lastChecked = lastSuccessfulCheckAt?.let { timeFormat.format(it) } ?: "—"
         statusBanner.text = "Session: $sessionText   Category: Car & Light Van (B)   " +
-            "Last checked: $lastChecked   Slots: ${currentSlots.size}"
+            "Last checked: $lastChecked   Centres: ${currentCentres.size}   Real slots: ${currentSlots.size}"
     }
 
     private fun refreshDebugText() {
@@ -591,11 +634,18 @@ class MainActivity : Activity() {
         sb.append("Last request: ").append(lastRequestUrl?.let { sanitizeUrlForDisplay(it) } ?: "—").append('\n')
         sb.append("Last HTTP status: ").append(lastHttpStatus?.toString() ?: "—").append('\n')
         sb.append("Last successful check: ").append(lastSuccessfulCheckAt?.let { timeFormat.format(it) } ?: "—").append('\n')
-        sb.append("Number of slots (last check): ").append(currentSlots.size).append('\n')
+        sb.append("Test centres (last check): ").append(currentCentres.size).append('\n')
+        sb.append("REAL SLOT RESPONSE - appointment slots (last check): ").append(currentSlots.size)
+        if (currentSlots.isEmpty()) {
+            sb.append(" (no confirmed appointment-slot response observed yet)")
+        }
+        sb.append('\n')
         sb.append("Parser status: ").append(currentParserStatus.name).append('\n')
         if (currentParserStatus == ParserStatus.UNRECOGNIZED_FORMAT) {
             sb.append('\n').append(getString(R.string.parser_format_changed)).append('\n')
         }
+        sb.append("\nResponses captured by endpoint:\n")
+        endpointGroupCounts.forEach { (group, count) -> sb.append("  ").append(group).append(": ").append(count).append('\n') }
         sb.append("\nNo cookies, tokens, or authorization headers are ever shown here.")
         debugText.text = sb.toString()
     }
@@ -651,10 +701,13 @@ class MainActivity : Activity() {
         allEntries.clear()
         availabilityEntries.clear()
         currentSlots = emptyList()
+        currentCentres = emptyList()
         currentParserStatus = ParserStatus.NOT_APPLICABLE
+        endpointGroupCounts.keys.forEach { endpointGroupCounts[it] = 0 }
         timerBanner.visibility = View.GONE
         refreshVisibleList()
         refreshAvailabilityList()
+        refreshCentreList()
         refreshSlotList()
         refreshStatusBanner()
         refreshDebugText()

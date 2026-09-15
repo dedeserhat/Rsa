@@ -114,23 +114,45 @@ this channel.
 - **AVAILABILITY tab**: unchanged in spirit, now also shows Work-Order
   responses; **"Copy Sanitized Availability JSON"** copies every captured
   (already-redacted) response body to the clipboard.
-- **SLOTS tab ("AVAILABLE DRIVING TESTS")**: a schema-agnostic extractor
-  (`AvailabilityResponseEntry.parsedSlots`) recursively finds JSON arrays
-  anywhere in an Availability/All-or-similar response, picks the one with
-  the most object elements, and for each object tries ordered field-name
-  hints (`CENTRE_FIELD_HINTS`/`DATE_FIELD_HINTS`/`TIME_FIELD_HINTS`/
+- **CENTRES tab**: for responses shaped like the real
+  `Availability/ByWorkOrderAndTerritory` schema (`id`, `name`, plus a
+  `nextAvailability` field and at least one of `county`/`territoryId`/
+  `latitude`/`longitude`/`providesRequestedServices`/`isClosest`) - matched
+  by URL (`ByWorkOrderAndTerritory`, `ClosestSimpleByWorkOrder`) **or** by
+  that object shape, so a similarly-shaped "Other" endpoint is still caught.
+  Shows centre name + `nextAvailability`, treating `"0001-01-01T00:00:00Z"`/
+  null/empty as "NO DATE AVAILABLE" and highlighting a genuine later date.
+  Notifies "RSA availability detected — {centre} — {date/time}" only for a
+  genuine date, deduplicated by centre id + nextAvailability (a later/earlier
+  date re-notifies).
+- **SLOTS tab ("REAL SLOT RESPONSE" / "AVAILABLE DRIVING TESTS")**: a
+  schema-agnostic extractor (`AvailabilityResponseEntry.parsedSlots`)
+  recursively finds JSON arrays anywhere in a response, **explicitly
+  excluding any array classified as a centre list** (see above) and never
+  matching a `nextAvailability`-named field as a slot date, then for each
+  remaining object tries ordered field-name hints
+  (`CENTRE_FIELD_HINTS`/`DATE_FIELD_HINTS`/`TIME_FIELD_HINTS`/
   `DATETIME_FIELD_HINTS` in `Constants.kt`) to pull a centre/date/time -
-  skipping (never guessing) any element it can't confidently read. **We
-  don't have a real captured Availability/All response body yet**, so these
-  hint lists are a best-effort first pass, not a confirmed schema - once you
-  capture one via the AVAILABILITY tab and share it, the hints should be
-  tightened to the exact real field names.
-- **Fail-safe (`ParserStatus`)**: `PARSED` (found at least one array - even
-  a genuinely empty one is a real "no slots" result) vs.
-  `UNRECOGNIZED_FORMAT` (body didn't parse as JSON, or no array-shaped data
-  anywhere) - the UI and debug tab show
+  skipping (never guessing) any element it can't confidently read, and never
+  inferring a slot count from raw array length. **We still don't have a real
+  captured response that returns individual appointment dates/times** - only
+  `ByWorkOrderAndTerritory` (centres) has been confirmed so far - so this
+  stays empty with an explicit "no confirmed appointment-slot response
+  observed yet" message until the real endpoint is identified and its exact
+  fields are captured.
+- **Fail-safe (`ParserStatus`)**: `PARSED` (found at least one array and
+  classified it as centres or slots - even a genuinely empty array is a real
+  "0" result) vs. `UNRECOGNIZED_FORMAT` (body didn't parse as JSON, had no
+  array-shaped data anywhere, or had elements neither shape recognized) -
+  the UI and DEBUG tab show
   "RSA response format changed — parser update required" for the latter
-  instead of ever silently reporting zero slots.
+  instead of ever silently reporting zero.
+- **DEBUG tab endpoint breakdown**: every captured Availability response is
+  grouped and counted by `endpointGroup` (`ByWorkOrderAndTerritory` /
+  `ClosestSimpleByWorkOrder` / `slots` / `All` / `Other`), shown both as a
+  per-card label in the AVAILABILITY tab and as counts in DEBUG - to help
+  identify which endpoint eventually turns out to carry real appointment
+  data.
 - **Notifications** (`NotificationHelper.kt`, HIGH-importance channel for
   slots, DEFAULT for session): fire only from a response your own manual
   WebView use already produced - never from a scheduler. A slot notifies

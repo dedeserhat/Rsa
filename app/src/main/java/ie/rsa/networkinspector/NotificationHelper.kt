@@ -71,6 +71,28 @@ object NotificationHelper {
         manager.notify(NOTIFICATION_ID_SLOT + slot.fingerprint.hashCode(), notification)
     }
 
+    fun notifyCentreAvailability(context: Context, centre: TestCentreStatus) {
+        if (!canPostNotifications(context)) return
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context, NOTIFICATION_ID_SLOT, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = Notification.Builder(context, CHANNEL_SLOT_ALERTS)
+            .setContentTitle("RSA availability detected")
+            .setContentText("${centre.name} — ${centre.nextAvailability}")
+            .setStyle(Notification.BigTextStyle().bigText("RSA availability detected — ${centre.name} — ${centre.nextAvailability}\n\nTap to open MyRoadSafety"))
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_EVENT)
+            .build()
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID_SLOT + centre.fingerprint.hashCode(), notification)
+    }
+
     fun notifyLoginRequired(context: Context) {
         if (!canPostNotifications(context)) return
         val openIntent = Intent(context, MainActivity::class.java).apply {

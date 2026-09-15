@@ -135,24 +135,33 @@
         android:background="@color/panelBody"
         android:padding="4dp">
 
-        <LinearLayout
+        <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:scrollbars="none">
 
-            <Button android:id="@+id/tabLogButton" style="?android:attr/buttonStyleSmall"
-                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                android:text="@string/tab_log" />
-            <Button android:id="@+id/tabAvailabilityButton" style="?android:attr/buttonStyleSmall"
-                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                android:text="@string/tab_availability" />
-            <Button android:id="@+id/tabSlotsButton" style="?android:attr/buttonStyleSmall"
-                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                android:text="@string/tab_slots" />
-            <Button android:id="@+id/tabDebugButton" style="?android:attr/buttonStyleSmall"
-                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                android:text="@string/tab_debug" />
-        </LinearLayout>
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button android:id="@+id/tabLogButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tab_log" />
+                <Button android:id="@+id/tabAvailabilityButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tab_availability" />
+                <Button android:id="@+id/tabCentresButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tab_centres" />
+                <Button android:id="@+id/tabSlotsButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tab_slots" />
+                <Button android:id="@+id/tabDebugButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tab_debug" />
+            </LinearLayout>
+        </HorizontalScrollView>
 
         <HorizontalScrollView
             android:layout_width="match_parent"

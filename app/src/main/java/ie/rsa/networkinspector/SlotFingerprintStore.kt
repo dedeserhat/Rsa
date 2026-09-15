@@ -3,14 +3,15 @@ package ie.rsa.networkinspector
 import android.content.Context
 
 /**
- * Persists which slot fingerprints (centre+date+time) have already been
- * notified about, so the same slot never re-triggers a notification. Plain
+ * Persists which fingerprints (e.g. centre+date+time for a slot, or
+ * centre-id+nextAvailability for a centre) have already been notified
+ * about, so the same one never re-triggers a notification. Plain
  * SharedPreferences - no Room/DataStore dependency needed for a simple set
- * of strings, and nothing here is a credential or personal detail.
+ * of strings, and nothing here is a credential or personal detail. Pass a
+ * distinct [key] per kind of fingerprint so slot and centre dedup don't mix.
  */
-class SlotFingerprintStore(context: Context) {
+class SlotFingerprintStore(context: Context, private val key: String = "notified_fingerprints") {
     private val prefs = context.getSharedPreferences("rsa_slot_watcher_prefs", Context.MODE_PRIVATE)
-    private val key = "notified_fingerprints"
 
     fun hasNotified(fingerprint: String): Boolean = fingerprints().contains(fingerprint)
 

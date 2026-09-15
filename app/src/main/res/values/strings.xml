@@ -24,6 +24,7 @@
     <string name="timer_value_format">RSA SLOT TIMER VALUE: %1$s</string>
     <string name="auth_test_title">Auth Test Instructions</string>
     <string name="auth_test_body">1. Capture an availability request while logged in.\n2. Export the result.\n3. Log out normally.\n4. Do not automatically replay authenticated requests.\n\nThis app determines authentication requirements from normal server behaviour only — it never bypasses login, and it never replays a captured request itself.</string>
+    <string name="tab_centres">CENTRES</string>
     <string name="tab_slots">SLOTS</string>
     <string name="tab_debug">DEBUG</string>
     <string name="action_copy_availability_json">Copy Sanitized Availability JSON</string>
