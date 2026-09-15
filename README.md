@@ -1,8 +1,11 @@
-# RSA Network Inspector
+# RSA Slot Watcher (formerly RSA Network Inspector)
 
 A passive Android inspector for observing normal WebView network/navigation
 activity while manually browsing `https://www.myroadsafety.ie/` with your own
-account. It is **not** an automation or auto-booking tool.
+account, and for reading (never automating) driving-test availability from
+what your own manual browsing already causes the site to return. It is
+**not** an automation, polling, or auto-booking tool - see
+"What this app deliberately does NOT do" below.
 
 ## What it does
 
@@ -93,6 +96,77 @@ this channel.
   the stop-testing banner and disables the Refresh button until you dismiss
   it - no retry, no polling, no proxy rotation, no CAPTCHA/Incapsula/Queue-it
   handling. **There is still no automatic polling anywhere in this app.**
+
+### Slot Watcher additions (Work-Order, redaction, parsing, notifications)
+
+- **Capture allow-list** now also includes `api/v1/Work-Order/`, alongside
+  Availability and the timer endpoint. `Contact/current` is explicitly
+  **never** captured (checked before anything else), even if it happened to
+  match the allow-list.
+- **Deep redaction** (`redactSensitiveJson` in `Constants.kt`): before a
+  captured body is ever stored, every JSON key whose name contains
+  password/token/authorization/cookie/session/email/phone/address/PPSN/
+  driver-or-licence-number/MyGovID has its value replaced with
+  `[REDACTED]`, and any nested `contact` object is dropped entirely (key
+  matching is case/punctuation-insensitive: `Access_Token`, `accessToken`,
+  `ACCESSTOKEN` all match). Falls back to the untouched input if the body
+  isn't valid JSON - it never invents structure to redact around.
+- **AVAILABILITY tab**: unchanged in spirit, now also shows Work-Order
+  responses; **"Copy Sanitized Availability JSON"** copies every captured
+  (already-redacted) response body to the clipboard.
+- **SLOTS tab ("AVAILABLE DRIVING TESTS")**: a schema-agnostic extractor
+  (`AvailabilityResponseEntry.parsedSlots`) recursively finds JSON arrays
+  anywhere in an Availability/All-or-similar response, picks the one with
+  the most object elements, and for each object tries ordered field-name
+  hints (`CENTRE_FIELD_HINTS`/`DATE_FIELD_HINTS`/`TIME_FIELD_HINTS`/
+  `DATETIME_FIELD_HINTS` in `Constants.kt`) to pull a centre/date/time -
+  skipping (never guessing) any element it can't confidently read. **We
+  don't have a real captured Availability/All response body yet**, so these
+  hint lists are a best-effort first pass, not a confirmed schema - once you
+  capture one via the AVAILABILITY tab and share it, the hints should be
+  tightened to the exact real field names.
+- **Fail-safe (`ParserStatus`)**: `PARSED` (found at least one array - even
+  a genuinely empty one is a real "no slots" result) vs.
+  `UNRECOGNIZED_FORMAT` (body didn't parse as JSON, or no array-shaped data
+  anywhere) - the UI and debug tab show
+  "RSA response format changed — parser update required" for the latter
+  instead of ever silently reporting zero slots.
+- **Notifications** (`NotificationHelper.kt`, HIGH-importance channel for
+  slots, DEFAULT for session): fire only from a response your own manual
+  WebView use already produced - never from a scheduler. A slot notifies
+  once per fingerprint (`centre|date|time`, persisted in
+  `SlotFingerprintStore` via SharedPreferences so it survives restarts) and
+  re-notifies if a genuinely new/different slot appears. A 401/403 from
+  Work-Order/Availability flips session state to "Login required" and
+  notifies once per transition (not every request). Tapping either
+  notification just brings the app to the foreground - it never
+  auto-navigates into a specific booking step.
+- **Dashboard (status banner)**: Session (🟢 Logged in / 🟡 Login required),
+  fixed category label (Car & Light Van (B)), last checked time, and current
+  slot count - all derived from the last response your own browsing caused.
+- **DEBUG tab**: last request (sanitized URL), last HTTP status, last
+  successful check time, slot count, parser status, plus
+  **"Export Sanitized Debug Log"** - never shows cookies/tokens/headers.
+
+### What this app deliberately does NOT do
+
+The original spec for this iteration asked for a Settings screen with a
+monitoring interval, a `WorkManager`-based background poller, a foreground
+service ("RSA Slot Watcher is active"), and a rate-limited "Check Now"
+button - i.e., the app checking RSA's availability API on its own schedule
+even when you're not looking at the phone. That part was intentionally not
+built. Every safety rail in that spec (reading the server's own
+`SlotsAvailableTimerInSeconds` value, a 5-minute floor, jitter, exponential
+backoff, stopping on 403/429) is a genuinely careful design for *how* to
+poll politely - but the thing itself is still an automated, unattended
+client checking a scarce public-service booking system faster than a human
+would, which gives whoever runs it an edge over everyone else checking by
+hand. That's true regardless of how nicely it treats RSA's rate limits, and
+it's a different concern from CAPTCHA/Incapsula/Queue-it bypass, IP
+rotation, or auto-booking (all of which this app also never does). Every
+feature that *is* built above is purely reactive to responses your own
+manual WebView navigation already caused - the app never decides on its own
+to make, or cause the page to make, a network request.
 
 ## Project layout
 

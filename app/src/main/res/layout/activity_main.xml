@@ -42,6 +42,17 @@
         android:padding="4dp"
         android:text="XHR HOOK INSTALLED: …   FETCH HOOK INSTALLED: …   HOOK INSTALLED AT: …" />
 
+    <TextView
+        android:id="@+id/statusBanner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/panelHeader"
+        android:textColor="@android:color/white"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:padding="6dp"
+        android:text="Session: — Category: Car &amp; Light Van (B) — Last checked: —" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -135,10 +146,35 @@
             <Button android:id="@+id/tabAvailabilityButton" style="?android:attr/buttonStyleSmall"
                 android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
                 android:text="@string/tab_availability" />
-            <Button android:id="@+id/authTestButton" style="?android:attr/buttonStyleSmall"
+            <Button android:id="@+id/tabSlotsButton" style="?android:attr/buttonStyleSmall"
                 android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                android:text="@string/action_auth_test" />
+                android:text="@string/tab_slots" />
+            <Button android:id="@+id/tabDebugButton" style="?android:attr/buttonStyleSmall"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                android:text="@string/tab_debug" />
         </LinearLayout>
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button android:id="@+id/authTestButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/action_auth_test" />
+                <Button android:id="@+id/copyAvailabilityJsonButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/action_copy_availability_json" />
+                <Button android:id="@+id/exportDebugLogButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/action_export_debug_log" />
+            </LinearLayout>
+        </HorizontalScrollView>
 
         <HorizontalScrollView
             android:id="@+id/filterRow"
@@ -183,6 +219,23 @@
             android:layout_weight="1"
             android:divider="@color/panelHeader"
             android:dividerHeight="1dp" />
+
+        <ScrollView
+            android:id="@+id/debugPanel"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/debugText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="8dp"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:textIsSelectable="true" />
+        </ScrollView>
     </LinearLayout>
 
 </LinearLayout>

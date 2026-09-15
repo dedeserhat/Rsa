@@ -1,6 +1,9 @@
 package ie.rsa.networkinspector
 
 import android.net.Uri
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.Locale
 
 /** Words that flag a request/page as likely related to the booking flow we're inspecting. */
 val INTEREST_KEYWORDS = listOf(
@@ -19,7 +22,9 @@ val SENSITIVE_PARAM_NAMES = setOf(
 val RESTRICTION_HTTP_CODES = setOf(403, 429)
 val RESTRICTION_TEXT_MARKERS = listOf(
     "access denied", "too many requests", "rate limit", "temporarily blocked",
-    "temporary block", "request blocked", "unusual traffic"
+    "temporary block", "request blocked", "unusual traffic",
+    "captcha", "incapsula", "queue-it", "queueit", "checking your browser",
+    "verify you are human", "please wait while we", "just a moment"
 )
 
 /**
@@ -34,6 +39,7 @@ val RESTRICTION_TEXT_MARKERS = listOf(
  */
 val AVAILABILITY_URL_MARKERS = listOf(
     "api/v1/Availability/",
+    "api/v1/Work-Order/",
     "api/v1/Settings/code/SlotsAvailableTimerInSeconds"
 )
 
@@ -41,10 +47,22 @@ const val SLOTS_MARKER = "Availability/slots"
 const val CLOSEST_WORKORDER_MARKER = "Availability/ClosestSimpleByWorkOrder"
 const val ALL_AVAILABILITY_MARKER = "Availability/All"
 const val BY_WORKORDER_TERRITORY_MARKER = "Availability/ByWorkOrderAndTerritory"
+const val WORK_ORDER_MARKER = "Work-Order"
 const val TIMER_MARKER = "SlotsAvailableTimerInSeconds"
+
+/**
+ * Endpoints whose bodies are NEVER captured even though they'd otherwise
+ * match [AVAILABILITY_URL_MARKERS] (e.g. a nested contact/current lookup
+ * triggered alongside a Work-Order call) - personal profile data, explicitly
+ * out of scope regardless of allow-list matches.
+ */
+val NEVER_CAPTURE_MARKERS = listOf("Contact/current", "contact/current")
 
 fun isAvailabilityUrl(url: String): Boolean =
     AVAILABILITY_URL_MARKERS.any { url.contains(it, ignoreCase = true) }
+
+fun isNeverCaptureUrl(url: String): Boolean =
+    NEVER_CAPTURE_MARKERS.any { url.contains(it, ignoreCase = true) }
 
 /** Rebuilds [url] with any sensitive-looking query values replaced, for safe display/export. */
 fun sanitizeUrlForDisplay(url: String): String {
@@ -60,6 +78,70 @@ fun sanitizeUrlForDisplay(url: String): String {
     return builder.build().toString()
 }
 
+/**
+ * JSON field-name substrings (matched against a lowercased, punctuation-stripped
+ * key, so "Access_Token", "accessToken", "ACCESSTOKEN" all match) whose VALUE
+ * is replaced with "[REDACTED]" wherever they appear in a captured response.
+ */
+private val SENSITIVE_JSON_KEY_HINTS = listOf(
+    "password", "pwd", "token", "authorization", "authtoken", "cookie",
+    "session", "email", "phone", "mobile", "address", "ppsn",
+    "drivernumber", "licencenumber", "licensenumber", "drivinglicence",
+    "drivinglicense", "mygovid", "govid", "dateofbirth", "dob", "nationalid"
+)
+
+/** Keys whose entire nested value (object/array/scalar) is dropped, not just redacted in place. */
+private val SUBTREE_REDACT_KEY_HINTS = listOf("contact")
+
+private fun normalizeKey(key: String): String = key.toLowerCase(Locale.ROOT).filter { it.isLetterOrDigit() }
+
+/**
+ * Deep-redacts a captured JSON response body before it is ever stored: any
+ * object key matching [SENSITIVE_JSON_KEY_HINTS] has its value replaced, and
+ * any key matching [SUBTREE_REDACT_KEY_HINTS] (e.g. a nested "contact"
+ * object) is dropped entirely. Falls back to returning the input unchanged
+ * if it isn't valid JSON (never invents structure).
+ */
+fun redactSensitiveJson(raw: String): String {
+    val trimmed = raw.trim()
+    return runCatching {
+        when {
+            trimmed.startsWith("[") -> redactArray(JSONArray(trimmed)).toString()
+            trimmed.startsWith("{") -> redactObject(JSONObject(trimmed)).toString()
+            else -> raw
+        }
+    }.getOrDefault(raw)
+}
+
+private fun redactObject(obj: JSONObject): JSONObject {
+    val keys = obj.keys().asSequence().toList()
+    for (key in keys) {
+        val normalized = normalizeKey(key)
+        when {
+            SUBTREE_REDACT_KEY_HINTS.any { normalized.contains(it) } -> obj.put(key, "[REDACTED]")
+            SENSITIVE_JSON_KEY_HINTS.any { normalized.contains(it) } -> obj.put(key, "[REDACTED]")
+            else -> {
+                val value = obj.opt(key)
+                when (value) {
+                    is JSONObject -> obj.put(key, redactObject(value))
+                    is JSONArray -> obj.put(key, redactArray(value))
+                }
+            }
+        }
+    }
+    return obj
+}
+
+private fun redactArray(arr: JSONArray): JSONArray {
+    for (i in 0 until arr.length()) {
+        when (val value = arr.opt(i)) {
+            is JSONObject -> arr.put(i, redactObject(value))
+            is JSONArray -> arr.put(i, redactArray(value))
+        }
+    }
+    return arr
+}
+
 /** Substrings of JSON field names that hint at a particular kind of slot data. */
 val SLOT_FIELD_HINTS: Map<String, List<String>> = linkedMapOf(
     "date" to listOf("date"),
@@ -71,6 +153,18 @@ val SLOT_FIELD_HINTS: Map<String, List<String>> = linkedMapOf(
     "test centre" to listOf("centre", "center"),
     "availability status" to listOf("status", "available", "availability")
 )
+
+/**
+ * Ordered (most-specific-first) field-name hints used by the generic slot
+ * extractor - never a hard-coded schema, just a best-effort guess checked
+ * against whatever the real response turns out to contain.
+ */
+val CENTRE_FIELD_HINTS = listOf(
+    "testcentrename", "centrename", "centername", "testcentre", "sitename", "locationname", "centre", "center", "location", "venue"
+)
+val DATE_FIELD_HINTS = listOf("appointmentdate", "slotdate", "availabledate", "startdate", "date")
+val TIME_FIELD_HINTS = listOf("appointmenttime", "slottime", "starttime", "availabletime", "time")
+val DATETIME_FIELD_HINTS = listOf("appointmentdatetime", "slotdatetime", "startdatetime", "datetime")
 
 /**
  * Injected as early as WebView allows (see MainActivity's shouldInterceptRequest/

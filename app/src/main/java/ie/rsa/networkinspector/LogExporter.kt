@@ -77,9 +77,20 @@ object LogExporter {
         return file
     }
 
-    private fun newExportFile(context: Context, extension: String): File {
+    fun writeDebugLog(context: Context, debugSummary: String): File {
+        val file = newExportFile(context, "txt", prefix = "rsa-slot-watcher-debug")
+        FileOutputStream(file).use { out ->
+            out.write("RSA Slot Watcher - sanitized debug export\n".toByteArray())
+            out.write("Generated: ${DateFormat.format("yyyy-MM-dd HH:mm:ss", System.currentTimeMillis())}\n".toByteArray())
+            out.write("No cookies, tokens, or authorization headers are ever recorded.\n\n".toByteArray())
+            out.write(debugSummary.toByteArray())
+        }
+        return file
+    }
+
+    private fun newExportFile(context: Context, extension: String, prefix: String = "rsa-network-log"): File {
         val dir = LogFileProvider.exportsDir(context)
-        val name = "rsa-network-log-${System.currentTimeMillis()}.$extension"
+        val name = "$prefix-${System.currentTimeMillis()}.$extension"
         return File(dir, name)
     }
 

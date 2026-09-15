@@ -1,9 +1,11 @@
 package ie.rsa.networkinspector
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
@@ -54,12 +56,35 @@ class MainActivity : Activity() {
     private lateinit var filterRsa: Button
     private lateinit var tabLogButton: Button
     private lateinit var tabAvailabilityButton: Button
+    private lateinit var tabSlotsButton: Button
+    private lateinit var tabDebugButton: Button
     private lateinit var authTestButton: Button
+    private lateinit var copyAvailabilityJsonButton: Button
+    private lateinit var exportDebugLogButton: Button
+    private lateinit var statusBanner: TextView
+    private lateinit var debugPanel: View
+    private lateinit var debugText: TextView
 
     private val adapter by lazy { LogAdapter(this) }
     private val availabilityAdapter by lazy { AvailabilityAdapter(this) }
+    private val slotAdapter by lazy { SlotAdapter(this) }
+    private val slotFingerprintStore by lazy { SlotFingerprintStore(this) }
     private val allEntries = mutableListOf<LogEntry>()
     private val availabilityEntries = mutableListOf<AvailabilityResponseEntry>()
+
+    /** Slots parsed from the most recently observed slot-list-shaped response only -
+     *  a snapshot of "what the last manual check showed", not accumulated history. */
+    private var currentSlots: List<DrivingTestSlot> = emptyList()
+    private var currentParserStatus: ParserStatus = ParserStatus.NOT_APPLICABLE
+
+    // Debug-tab state - never includes headers/cookies/tokens, only what's already
+    // shown elsewhere in sanitized form.
+    private var lastRequestUrl: String? = null
+    private var lastHttpStatus: Int? = null
+    private var lastSuccessfulCheckAt: Long? = null
+
+    /** null = unknown yet, true = last availability/work-order response was 2xx, false = 401/403 seen. */
+    private var sessionLoggedIn: Boolean? = null
 
     /** Availability-endpoint URLs seen by the native shouldInterceptRequest layer that
      *  haven't been matched by a JS-reported response yet - used only for the
@@ -69,7 +94,7 @@ class MainActivity : Activity() {
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     private enum class FilterMode { ALL, API, FETCH_XHR, DOCUMENT, RSA_ONLY }
-    private enum class ViewMode { LOG, AVAILABILITY }
+    private enum class ViewMode { LOG, AVAILABILITY, SLOTS, DEBUG }
     private var currentFilter = FilterMode.ALL
     private var currentMode = ViewMode.LOG
     private var searchQuery: String = ""
@@ -83,8 +108,17 @@ class MainActivity : Activity() {
         configureWebView()
         wireControls()
 
+        NotificationHelper.ensureChannels(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+
         webView.loadUrl(DEFAULT_URL)
         addressBar.setText(DEFAULT_URL)
+        refreshStatusBanner()
+        refreshDebugText()
     }
 
     private fun bindViews() {
@@ -106,7 +140,14 @@ class MainActivity : Activity() {
         filterRsa = findViewById(R.id.filterRsa)
         tabLogButton = findViewById(R.id.tabLogButton)
         tabAvailabilityButton = findViewById(R.id.tabAvailabilityButton)
+        tabSlotsButton = findViewById(R.id.tabSlotsButton)
+        tabDebugButton = findViewById(R.id.tabDebugButton)
         authTestButton = findViewById(R.id.authTestButton)
+        copyAvailabilityJsonButton = findViewById(R.id.copyAvailabilityJsonButton)
+        exportDebugLogButton = findViewById(R.id.exportDebugLogButton)
+        statusBanner = findViewById(R.id.statusBanner)
+        debugPanel = findViewById(R.id.debugPanel)
+        debugText = findViewById(R.id.debugText)
 
         logListView.adapter = adapter
     }
@@ -264,7 +305,11 @@ class MainActivity : Activity() {
 
         tabLogButton.setOnClickListener { switchMode(ViewMode.LOG) }
         tabAvailabilityButton.setOnClickListener { switchMode(ViewMode.AVAILABILITY) }
+        tabSlotsButton.setOnClickListener { switchMode(ViewMode.SLOTS) }
+        tabDebugButton.setOnClickListener { switchMode(ViewMode.DEBUG) }
         authTestButton.setOnClickListener { showAuthTestInstructions() }
+        copyAvailabilityJsonButton.setOnClickListener { copySanitizedAvailabilityJson() }
+        exportDebugLogButton.setOnClickListener { exportSanitizedDebugLog() }
 
         searchBox.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -276,30 +321,41 @@ class MainActivity : Activity() {
         })
 
         logListView.onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
-            val url = when (currentMode) {
+            val text = when (currentMode) {
                 ViewMode.LOG -> adapter.getItem(position).url
                 ViewMode.AVAILABILITY -> availabilityAdapter.getItem(position).sanitizedUrl
+                ViewMode.SLOTS -> slotAdapter.getItem(position).displayText()
+                ViewMode.DEBUG -> return@OnItemClickListener
             }
-            Toast.makeText(this, url, Toast.LENGTH_LONG).show()
+            Toast.makeText(this, text, Toast.LENGTH_LONG).show()
         }
     }
 
     private fun switchMode(mode: ViewMode) {
         currentMode = mode
+        filterRow.visibility = if (mode == ViewMode.LOG) View.VISIBLE else View.GONE
+        searchBox.visibility = if (mode == ViewMode.LOG) View.VISIBLE else View.GONE
+        logListView.visibility = if (mode == ViewMode.DEBUG) View.GONE else View.VISIBLE
+        debugPanel.visibility = if (mode == ViewMode.DEBUG) View.VISIBLE else View.GONE
         when (mode) {
             ViewMode.LOG -> {
-                filterRow.visibility = View.VISIBLE
-                searchBox.visibility = View.VISIBLE
                 logListView.adapter = adapter
                 refreshVisibleList()
             }
             ViewMode.AVAILABILITY -> {
-                filterRow.visibility = View.GONE
-                searchBox.visibility = View.GONE
                 logListView.adapter = availabilityAdapter
                 refreshAvailabilityList()
             }
+            ViewMode.SLOTS -> {
+                logListView.adapter = slotAdapter
+                refreshSlotList()
+            }
+            ViewMode.DEBUG -> refreshDebugText()
         }
+    }
+
+    private fun refreshSlotList() {
+        slotAdapter.setItems(currentSlots)
     }
 
     private fun showAuthTestInstructions() {
@@ -423,14 +479,33 @@ class MainActivity : Activity() {
     ) {
         if (!isAvailabilityUrl(url)) return
         clearPendingAvailabilityRequest(url)
+
+        lastRequestUrl = url
+        lastHttpStatus = status
+        updateSessionState(url, status, timestamp)
+
+        // Never captured at all, regardless of allow-list match - e.g. a contact
+        // lookup nested alongside a Work-Order call.
+        if (isNeverCaptureUrl(url)) {
+            refreshDebugText()
+            return
+        }
+
+        if (status in RESTRICTION_HTTP_CODES) {
+            showRestrictionWarning("HTTP $status from availability API")
+            refreshDebugText()
+            return
+        }
+
         val cappedBody = if (body.length > 50_000) body.substring(0, 50_000) else body
+        val redactedBody = redactSensitiveJson(cappedBody)
         val entry = AvailabilityResponseEntry(
             timestamp = timestamp,
             method = "$method ($kind)",
             url = url,
             status = status,
             contentType = contentType,
-            rawBody = cappedBody,
+            rawBody = redactedBody,
             source = LogSource.JS_OBSERVER
         )
         availabilityEntries.add(entry)
@@ -445,17 +520,84 @@ class MainActivity : Activity() {
             }
         }
 
-        if (status in RESTRICTION_HTTP_CODES) {
-            showRestrictionWarning("HTTP $status from availability API")
+        if (entry.isSlotListResponse) {
+            currentParserStatus = entry.parserStatus
+            when (entry.parserStatus) {
+                ParserStatus.PARSED -> {
+                    currentSlots = entry.parsedSlots
+                    if (status in 200..299) lastSuccessfulCheckAt = timestamp
+                    notifyNewSlots(currentSlots)
+                }
+                ParserStatus.UNRECOGNIZED_FORMAT -> {
+                    // Fail-safe: never let an unparseable response read as "no slots".
+                    Log.w(TAG, "Slot parser could not recognize response format for $url")
+                }
+                ParserStatus.NOT_APPLICABLE -> {}
+            }
+            if (currentMode == ViewMode.SLOTS) refreshSlotList()
         }
 
         if (currentMode == ViewMode.AVAILABILITY) {
             refreshAvailabilityList()
         }
+        refreshStatusBanner()
+        refreshDebugText()
+    }
+
+    /** Notifies for any parsed slot not already notified about; dedup persists across restarts. */
+    private fun notifyNewSlots(slots: List<DrivingTestSlot>) {
+        for (slot in slots) {
+            if (!slotFingerprintStore.hasNotified(slot.fingerprint)) {
+                NotificationHelper.notifySlotFound(this, slot)
+                slotFingerprintStore.markNotified(slot.fingerprint)
+            }
+        }
+    }
+
+    /** Tracks logged-in/logged-out purely from response status codes already being observed;
+     *  fires the "please log in again" notification only on the transition, not every request. */
+    private fun updateSessionState(url: String, status: Int, timestamp: Long) {
+        if (!(url.contains(WORK_ORDER_MARKER, ignoreCase = true) || isAvailabilityUrl(url))) return
+        when {
+            status == 401 || status == 403 -> {
+                val wasLoggedIn = sessionLoggedIn != false
+                sessionLoggedIn = false
+                if (wasLoggedIn) NotificationHelper.notifyLoginRequired(this)
+            }
+            status in 200..299 -> {
+                sessionLoggedIn = true
+                lastSuccessfulCheckAt = timestamp
+            }
+        }
     }
 
     private fun refreshAvailabilityList() {
         availabilityAdapter.setItems(availabilityEntries.asReversed())
+    }
+
+    private fun refreshStatusBanner() {
+        val sessionText = when (sessionLoggedIn) {
+            true -> "🟢 Logged in"
+            false -> "🟡 Login required"
+            null -> "— unknown —"
+        }
+        val lastChecked = lastSuccessfulCheckAt?.let { timeFormat.format(it) } ?: "—"
+        statusBanner.text = "Session: $sessionText   Category: Car & Light Van (B)   " +
+            "Last checked: $lastChecked   Slots: ${currentSlots.size}"
+    }
+
+    private fun refreshDebugText() {
+        val sb = StringBuilder()
+        sb.append("Last request: ").append(lastRequestUrl?.let { sanitizeUrlForDisplay(it) } ?: "—").append('\n')
+        sb.append("Last HTTP status: ").append(lastHttpStatus?.toString() ?: "—").append('\n')
+        sb.append("Last successful check: ").append(lastSuccessfulCheckAt?.let { timeFormat.format(it) } ?: "—").append('\n')
+        sb.append("Number of slots (last check): ").append(currentSlots.size).append('\n')
+        sb.append("Parser status: ").append(currentParserStatus.name).append('\n')
+        if (currentParserStatus == ParserStatus.UNRECOGNIZED_FORMAT) {
+            sb.append('\n').append(getString(R.string.parser_format_changed)).append('\n')
+        }
+        sb.append("\nNo cookies, tokens, or authorization headers are ever shown here.")
+        debugText.text = sb.toString()
     }
 
     /** Diagnostic: whether the fetch/XHR hooks actually installed for this page, and when. */
@@ -508,9 +650,30 @@ class MainActivity : Activity() {
     private fun clearLog() {
         allEntries.clear()
         availabilityEntries.clear()
+        currentSlots = emptyList()
+        currentParserStatus = ParserStatus.NOT_APPLICABLE
         timerBanner.visibility = View.GONE
         refreshVisibleList()
         refreshAvailabilityList()
+        refreshSlotList()
+        refreshStatusBanner()
+        refreshDebugText()
+    }
+
+    private fun copySanitizedAvailabilityJson() {
+        if (availabilityEntries.isEmpty()) {
+            Toast.makeText(this, "No availability responses captured yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val combined = availabilityEntries.joinToString("\n\n---\n\n") { it.prettyBody }
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Sanitized RSA availability JSON", combined))
+        Toast.makeText(this, "Sanitized availability JSON copied to clipboard", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun exportSanitizedDebugLog() {
+        val file = LogExporter.writeDebugLog(this, debugText.text.toString())
+        startActivity(LogExporter.shareIntentFor(this, file))
     }
 
     private fun exportLog() {

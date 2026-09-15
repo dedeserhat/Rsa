@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">RSA Network Inspector</string>
+    <string name="app_name">RSA Slot Watcher</string>
     <string name="address_bar_hint">https://www.myroadsafety.ie/</string>
     <string name="action_go">Go</string>
     <string name="action_back">Back</string>
@@ -24,4 +24,9 @@
     <string name="timer_value_format">RSA SLOT TIMER VALUE: %1$s</string>
     <string name="auth_test_title">Auth Test Instructions</string>
     <string name="auth_test_body">1. Capture an availability request while logged in.\n2. Export the result.\n3. Log out normally.\n4. Do not automatically replay authenticated requests.\n\nThis app determines authentication requirements from normal server behaviour only — it never bypasses login, and it never replays a captured request itself.</string>
+    <string name="tab_slots">SLOTS</string>
+    <string name="tab_debug">DEBUG</string>
+    <string name="action_copy_availability_json">Copy Sanitized Availability JSON</string>
+    <string name="action_export_debug_log">Export Sanitized Debug Log</string>
+    <string name="parser_format_changed">RSA response format changed — parser update required</string>
 </resources>
