@@ -31,6 +31,36 @@ account. It is **not** an automation or auto-booking tool.
   persist normally for the life of the app so you can log in manually; there
   is no auto-login and no background/auto-refresh anywhere in the code.
 
+### Response inspector (RSA availability/timer endpoints only)
+
+For requests whose URL contains `/api/v1/Availability/` or
+`/api/v1/Settings/code/SlotsAvailableTimerInSeconds`, the JS shim also
+inspects the **response** - via `response.clone()` for `fetch()` (the page
+always gets the original, untouched response back) and `responseText` on
+`readystatechange`/DONE for XHR - and reports status, content-type, and body
+back to Android. Every other request is still metadata-only (method/URL/
+timestamp). Kotlin re-validates the URL against the same allow-list before
+storing anything, so a compromised/misbehaving page script can't smuggle
+arbitrary data in under this channel.
+
+- **AVAILABILITY tab**: shows only these captured responses as cards
+  (METHOD / STATUS / URL / TIME / pretty-printed JSON response).
+- **Timer detection**: a `SlotsAvailableTimerInSeconds` response shows
+  "RSA SLOT TIMER VALUE: …" in a banner - the raw server value, display-only,
+  never used to schedule anything.
+- **Slot analysis**: an `Availability/slots` JSON response is scanned
+  (read-only) for likely date/time/appointment-id/slot-id/test-centre/
+  status fields and shows "SLOTS FOUND: N".
+- **AUTH TEST INSTRUCTIONS** button shows static instructions (capture while
+  logged in → export → log out normally) - it does not touch auth itself.
+- Export JSON gained an `availabilityResponses` array (timestamp, method,
+  sanitizedUrl, status, contentType, responseBody); query values keep being
+  redacted the same way as the rest of the log.
+- On HTTP 403/429 from any request, including these endpoints, the app shows
+  the stop-testing banner and disables the Refresh button until you dismiss
+  it - no retry, no polling, no proxy rotation, no CAPTCHA/Incapsula/Queue-it
+  handling. **There is still no automatic polling anywhere in this app.**
+
 ## Project layout
 
 Standard Android Gradle project (Kotlin, no third-party dependencies -

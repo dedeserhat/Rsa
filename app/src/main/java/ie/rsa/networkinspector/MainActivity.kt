@@ -1,6 +1,7 @@
 package ie.rsa.networkinspector
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.net.Uri
@@ -39,17 +40,27 @@ class MainActivity : Activity() {
     private lateinit var logPanelBody: View
     private lateinit var logToggleHeader: TextView
     private lateinit var restrictionBanner: TextView
+    private lateinit var timerBanner: TextView
+    private lateinit var refreshButton: Button
+    private lateinit var filterRow: View
     private lateinit var filterAll: Button
     private lateinit var filterApi: Button
     private lateinit var filterFetch: Button
     private lateinit var filterDocument: Button
     private lateinit var filterRsa: Button
+    private lateinit var tabLogButton: Button
+    private lateinit var tabAvailabilityButton: Button
+    private lateinit var authTestButton: Button
 
     private val adapter by lazy { LogAdapter(this) }
+    private val availabilityAdapter by lazy { AvailabilityAdapter(this) }
     private val allEntries = mutableListOf<LogEntry>()
+    private val availabilityEntries = mutableListOf<AvailabilityResponseEntry>()
 
     private enum class FilterMode { ALL, API, FETCH_XHR, DOCUMENT, RSA_ONLY }
+    private enum class ViewMode { LOG, AVAILABILITY }
     private var currentFilter = FilterMode.ALL
+    private var currentMode = ViewMode.LOG
     private var searchQuery: String = ""
     private var logPanelExpanded = true
 
@@ -73,11 +84,17 @@ class MainActivity : Activity() {
         logPanelBody = findViewById(R.id.logPanelBody)
         logToggleHeader = findViewById(R.id.logToggleHeader)
         restrictionBanner = findViewById(R.id.restrictionBanner)
+        timerBanner = findViewById(R.id.timerBanner)
+        refreshButton = findViewById(R.id.refreshButton)
+        filterRow = findViewById(R.id.filterRow)
         filterAll = findViewById(R.id.filterAll)
         filterApi = findViewById(R.id.filterApi)
         filterFetch = findViewById(R.id.filterFetch)
         filterDocument = findViewById(R.id.filterDocument)
         filterRsa = findViewById(R.id.filterRsa)
+        tabLogButton = findViewById(R.id.tabLogButton)
+        tabAvailabilityButton = findViewById(R.id.tabAvailabilityButton)
+        authTestButton = findViewById(R.id.authTestButton)
 
         logListView.adapter = adapter
     }
@@ -100,7 +117,10 @@ class MainActivity : Activity() {
 
         val bridge = WebObserverBridge(
             onJsCall = { kind, method, url, timestamp -> onJsObservedCall(kind, method, url, timestamp) },
-            onBlockDetected = { showRestrictionWarning("Page content matches a rate-limit/blocked pattern") }
+            onBlockDetected = { showRestrictionWarning("Page content matches a rate-limit/blocked pattern") },
+            onApiResponse = { method, url, status, contentType, body, timestamp ->
+                onApiResponseObserved(method, url, status, contentType, body, timestamp)
+            }
         )
         webView.addJavascriptInterface(bridge, "AndroidLogger")
 
@@ -121,12 +141,12 @@ class MainActivity : Activity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 addressBar.setText(url)
-                view.evaluateJavascript(JS_OBSERVER_SCRIPT, null)
+                view.evaluateJavascript(buildObserverScript(), null)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 addressBar.setText(url)
-                view.evaluateJavascript(JS_OBSERVER_SCRIPT, null)
+                view.evaluateJavascript(buildObserverScript(), null)
                 view.evaluateJavascript(buildBlockDetectorScript(), null)
             }
 
@@ -193,7 +213,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.forwardButton).setOnClickListener {
             if (webView.canGoForward()) webView.goForward()
         }
-        findViewById<Button>(R.id.refreshButton).setOnClickListener {
+        refreshButton.setOnClickListener {
             // Manual refresh only - the app never reloads pages on its own.
             webView.reload()
         }
@@ -209,13 +229,22 @@ class MainActivity : Activity() {
             )
         }
 
-        restrictionBanner.setOnClickListener { restrictionBanner.visibility = View.GONE }
+        restrictionBanner.setOnClickListener {
+            restrictionBanner.visibility = View.GONE
+            // Dismissing the banner is the user's explicit re-enable of manual refresh.
+            refreshButton.isEnabled = true
+        }
+        timerBanner.setOnClickListener { timerBanner.visibility = View.GONE }
 
         filterAll.setOnClickListener { setFilter(FilterMode.ALL) }
         filterApi.setOnClickListener { setFilter(FilterMode.API) }
         filterFetch.setOnClickListener { setFilter(FilterMode.FETCH_XHR) }
         filterDocument.setOnClickListener { setFilter(FilterMode.DOCUMENT) }
         filterRsa.setOnClickListener { setFilter(FilterMode.RSA_ONLY) }
+
+        tabLogButton.setOnClickListener { switchMode(ViewMode.LOG) }
+        tabAvailabilityButton.setOnClickListener { switchMode(ViewMode.AVAILABILITY) }
+        authTestButton.setOnClickListener { showAuthTestInstructions() }
 
         searchBox.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -227,9 +256,38 @@ class MainActivity : Activity() {
         })
 
         logListView.onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
-            val entry = adapter.getItem(position)
-            Toast.makeText(this, entry.url, Toast.LENGTH_LONG).show()
+            val url = when (currentMode) {
+                ViewMode.LOG -> adapter.getItem(position).url
+                ViewMode.AVAILABILITY -> availabilityAdapter.getItem(position).sanitizedUrl
+            }
+            Toast.makeText(this, url, Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun switchMode(mode: ViewMode) {
+        currentMode = mode
+        when (mode) {
+            ViewMode.LOG -> {
+                filterRow.visibility = View.VISIBLE
+                searchBox.visibility = View.VISIBLE
+                logListView.adapter = adapter
+                refreshVisibleList()
+            }
+            ViewMode.AVAILABILITY -> {
+                filterRow.visibility = View.GONE
+                searchBox.visibility = View.GONE
+                logListView.adapter = availabilityAdapter
+                refreshAvailabilityList()
+            }
+        }
+    }
+
+    private fun showAuthTestInstructions() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.auth_test_title)
+            .setMessage(R.string.auth_test_body)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun navigateToAddressBarUrl() {
@@ -295,6 +353,55 @@ class MainActivity : Activity() {
         refreshVisibleList()
     }
 
+    /**
+     * Response for one of the RSA availability/timer endpoints, reported by the
+     * JS observer via response.clone() (fetch) or responseText (XHR). Re-checks
+     * the URL against the same allow-list the JS uses before trusting it at all.
+     */
+    private fun onApiResponseObserved(
+        method: String,
+        url: String,
+        status: Int,
+        contentType: String,
+        body: String,
+        timestamp: Long
+    ) {
+        if (!isAvailabilityUrl(url)) return
+        val cappedBody = if (body.length > 50_000) body.substring(0, 50_000) else body
+        val entry = AvailabilityResponseEntry(
+            timestamp = timestamp,
+            method = method,
+            url = url,
+            status = status,
+            contentType = contentType,
+            rawBody = cappedBody,
+            source = LogSource.JS_OBSERVER
+        )
+        availabilityEntries.add(entry)
+        if (availabilityEntries.size > 500) {
+            availabilityEntries.removeAt(0)
+        }
+
+        if (entry.isTimerResponse) {
+            entry.timerValueSeconds?.let {
+                timerBanner.text = getString(R.string.timer_value_format, it)
+                timerBanner.visibility = View.VISIBLE
+            }
+        }
+
+        if (status in RESTRICTION_HTTP_CODES) {
+            showRestrictionWarning("HTTP $status from availability API")
+        }
+
+        if (currentMode == ViewMode.AVAILABILITY) {
+            refreshAvailabilityList()
+        }
+    }
+
+    private fun refreshAvailabilityList() {
+        availabilityAdapter.setItems(availabilityEntries.asReversed())
+    }
+
     private fun setFilter(mode: FilterMode) {
         currentFilter = mode
         refreshVisibleList()
@@ -320,15 +427,18 @@ class MainActivity : Activity() {
 
     private fun clearLog() {
         allEntries.clear()
+        availabilityEntries.clear()
+        timerBanner.visibility = View.GONE
         refreshVisibleList()
+        refreshAvailabilityList()
     }
 
     private fun exportLog() {
-        if (allEntries.isEmpty()) {
+        if (allEntries.isEmpty() && availabilityEntries.isEmpty()) {
             Toast.makeText(this, "Log is empty", Toast.LENGTH_SHORT).show()
             return
         }
-        val file = LogExporter.writeJson(this, allEntries)
+        val file = LogExporter.writeJson(this, allEntries, availabilityEntries)
         startActivity(LogExporter.shareIntentFor(this, file))
     }
 
@@ -347,6 +457,9 @@ class MainActivity : Activity() {
         Log.w(TAG, "Restriction detected: $detail")
         restrictionBanner.text = getString(R.string.restriction_warning)
         restrictionBanner.visibility = View.VISIBLE
+        // Stop the one piece of inspector-generated network activity we control.
+        // Manual navigation via the address bar / links is left entirely up to you.
+        refreshButton.isEnabled = false
     }
 
     override fun onBackPressed() {

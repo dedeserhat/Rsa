@@ -25,7 +25,11 @@ object LogExporter {
         return file
     }
 
-    fun writeJson(context: Context, entries: List<LogEntry>): File {
+    fun writeJson(
+        context: Context,
+        entries: List<LogEntry>,
+        availabilityEntries: List<AvailabilityResponseEntry> = emptyList()
+    ): File {
         val file = newExportFile(context, "json")
         val root = JSONObject()
         root.put("app", "RSA Network Inspector")
@@ -51,6 +55,24 @@ object LogExporter {
             array.put(obj)
         }
         root.put("entries", array)
+
+        val availArray = JSONArray()
+        availabilityEntries.forEach { a ->
+            val obj = JSONObject()
+            obj.put("timestamp", a.timestamp)
+            obj.put("time", a.formattedTime())
+            obj.put("method", a.method)
+            obj.put("sanitizedUrl", a.sanitizedUrl)
+            obj.put("status", a.status)
+            obj.put("contentType", a.contentType)
+            obj.put("responseBody", a.prettyBody)
+            obj.put("slotCount", a.slotCount ?: JSONObject.NULL)
+            obj.put("detectedFields", JSONArray(a.detectedFields))
+            obj.put("timerValueSeconds", a.timerValueSeconds ?: JSONObject.NULL)
+            availArray.put(obj)
+        }
+        root.put("availabilityResponses", availArray)
+
         FileOutputStream(file).use { out -> out.write(root.toString(2).toByteArray()) }
         return file
     }
