@@ -30,6 +30,18 @@
         android:padding="10dp"
         android:visibility="gone" />
 
+    <TextView
+        android:id="@+id/diagnosticBanner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/panelBody"
+        android:textColor="@color/panelHeader"
+        android:textSize="10sp"
+        android:fontFamily="monospace"
+        android:gravity="center"
+        android:padding="4dp"
+        android:text="XHR HOOK INSTALLED: …   FETCH HOOK INSTALLED: …   HOOK INSTALLED AT: …" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

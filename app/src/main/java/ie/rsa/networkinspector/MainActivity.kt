@@ -8,6 +8,8 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -26,6 +28,7 @@ import android.widget.EditText
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import java.text.SimpleDateFormat
 import java.util.Locale
 
 private const val TAG = "RsaNetworkInspector"
@@ -41,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var logToggleHeader: TextView
     private lateinit var restrictionBanner: TextView
     private lateinit var timerBanner: TextView
+    private lateinit var diagnosticBanner: TextView
     private lateinit var refreshButton: Button
     private lateinit var filterRow: View
     private lateinit var filterAll: Button
@@ -56,6 +60,13 @@ class MainActivity : Activity() {
     private val availabilityAdapter by lazy { AvailabilityAdapter(this) }
     private val allEntries = mutableListOf<LogEntry>()
     private val availabilityEntries = mutableListOf<AvailabilityResponseEntry>()
+
+    /** Availability-endpoint URLs seen by the native shouldInterceptRequest layer that
+     *  haven't been matched by a JS-reported response yet - used only for the
+     *  "response hook missed it" diagnostic, never to act on the network itself. */
+    private val pendingAvailabilityRequests = mutableListOf<Pair<String, Long>>()
+    private val diagnosticHandler = Handler(Looper.getMainLooper())
+    private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     private enum class FilterMode { ALL, API, FETCH_XHR, DOCUMENT, RSA_ONLY }
     private enum class ViewMode { LOG, AVAILABILITY }
@@ -85,6 +96,7 @@ class MainActivity : Activity() {
         logToggleHeader = findViewById(R.id.logToggleHeader)
         restrictionBanner = findViewById(R.id.restrictionBanner)
         timerBanner = findViewById(R.id.timerBanner)
+        diagnosticBanner = findViewById(R.id.diagnosticBanner)
         refreshButton = findViewById(R.id.refreshButton)
         filterRow = findViewById(R.id.filterRow)
         filterAll = findViewById(R.id.filterAll)
@@ -118,9 +130,11 @@ class MainActivity : Activity() {
         val bridge = WebObserverBridge(
             onJsCall = { kind, method, url, timestamp -> onJsObservedCall(kind, method, url, timestamp) },
             onBlockDetected = { showRestrictionWarning("Page content matches a rate-limit/blocked pattern") },
-            onApiResponse = { method, url, status, contentType, body, timestamp ->
-                onApiResponseObserved(method, url, status, contentType, body, timestamp)
-            }
+            onApiResponse = { kind, method, url, status, contentType, body, timestamp ->
+                onApiResponseObserved(kind, method, url, status, contentType, body, timestamp)
+            },
+            onHookStatus = { fetchInstalled, xhrInstalled, installedAt -> onHookStatusReported(fetchInstalled, xhrInstalled, installedAt) },
+            onXhrResponseCaptured = { url -> onXhrResponseCapturedReported(url) }
         )
         webView.addJavascriptInterface(bridge, "AndroidLogger")
 
@@ -136,6 +150,12 @@ class MainActivity : Activity() {
                 request: WebResourceRequest
             ): WebResourceResponse? {
                 recordWebViewRequest(request)
+                if (request.isForMainFrame) {
+                    // Earliest point WebView gives us a hook on this navigation - post the
+                    // observer script for the instant the UI thread is free, well before
+                    // onPageStarted/onPageFinished. May run on a non-UI thread here.
+                    view.post { view.evaluateJavascript(buildObserverScript(), null) }
+                }
                 return null // Always let WebView perform the real request unmodified.
             }
 
@@ -312,7 +332,41 @@ class MainActivity : Activity() {
             resourceKind = kind,
             source = LogSource.WEBVIEW
         )
-        runOnUiThread { appendEntry(entry) }
+        runOnUiThread {
+            appendEntry(entry)
+            if (isAvailabilityUrl(url)) {
+                trackPendingAvailabilityRequest(url)
+            }
+        }
+    }
+
+    /** Records that the native layer saw a matching request, so we can flag it later if
+     *  no JS-reported response ever shows up for it (see [checkForMissedResponse]). */
+    private fun trackPendingAvailabilityRequest(url: String) {
+        pendingAvailabilityRequests.add(url to System.currentTimeMillis())
+        diagnosticHandler.postDelayed({ checkForMissedResponse(url) }, 6000L)
+    }
+
+    private fun clearPendingAvailabilityRequest(url: String) {
+        pendingAvailabilityRequests.removeAll { (pendingUrl, _) -> pendingUrl == url || pendingUrl.contains(url) || url.contains(pendingUrl) }
+    }
+
+    private fun checkForMissedResponse(url: String) {
+        val stillPending = pendingAvailabilityRequests.any { (pendingUrl, _) -> pendingUrl == url }
+        pendingAvailabilityRequests.removeAll { (pendingUrl, _) -> pendingUrl == url }
+        if (stillPending && url.contains(SLOTS_MARKER, ignoreCase = true)) {
+            appendEntry(
+                LogEntry(
+                    timestamp = System.currentTimeMillis(),
+                    method = "WARNING: SLOT REQUEST OBSERVED BUT RESPONSE HOOK MISSED IT",
+                    url = url,
+                    isMainFrame = false,
+                    isRedirect = false,
+                    resourceKind = ResourceKind.OTHER,
+                    source = LogSource.SYSTEM
+                )
+            )
+        }
     }
 
     private fun guessResourceKind(request: WebResourceRequest): ResourceKind {
@@ -359,6 +413,7 @@ class MainActivity : Activity() {
      * the URL against the same allow-list the JS uses before trusting it at all.
      */
     private fun onApiResponseObserved(
+        kind: String,
         method: String,
         url: String,
         status: Int,
@@ -367,10 +422,11 @@ class MainActivity : Activity() {
         timestamp: Long
     ) {
         if (!isAvailabilityUrl(url)) return
+        clearPendingAvailabilityRequest(url)
         val cappedBody = if (body.length > 50_000) body.substring(0, 50_000) else body
         val entry = AvailabilityResponseEntry(
             timestamp = timestamp,
-            method = method,
+            method = "$method ($kind)",
             url = url,
             status = status,
             contentType = contentType,
@@ -400,6 +456,30 @@ class MainActivity : Activity() {
 
     private fun refreshAvailabilityList() {
         availabilityAdapter.setItems(availabilityEntries.asReversed())
+    }
+
+    /** Diagnostic: whether the fetch/XHR hooks actually installed for this page, and when. */
+    private fun onHookStatusReported(fetchInstalled: Boolean, xhrInstalled: Boolean, installedAt: Long) {
+        diagnosticBanner.text =
+            "XHR HOOK INSTALLED: ${if (xhrInstalled) "YES" else "NO"}   " +
+                "FETCH HOOK INSTALLED: ${if (fetchInstalled) "YES" else "NO"}   " +
+                "HOOK INSTALLED AT: ${timeFormat.format(installedAt)}"
+    }
+
+    /** Diagnostic: a matching XHR reached DONE and its response was actually read. */
+    private fun onXhrResponseCapturedReported(url: String) {
+        clearPendingAvailabilityRequest(url)
+        appendEntry(
+            LogEntry(
+                timestamp = System.currentTimeMillis(),
+                method = "XHR RESPONSE CAPTURED",
+                url = url,
+                isMainFrame = false,
+                isRedirect = false,
+                resourceKind = ResourceKind.OTHER,
+                source = LogSource.SYSTEM
+            )
+        )
     }
 
     private fun setFilter(mode: FilterMode) {

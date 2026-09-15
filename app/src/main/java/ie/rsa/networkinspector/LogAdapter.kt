@@ -30,6 +30,8 @@ class LogAdapter(private val context: Context) : BaseAdapter() {
         text.text = entry.oneLineSummary()
         text.setTextColor(
             when {
+                entry.method?.startsWith("WARNING") == true -> Color.parseColor("#B71C1C")
+                entry.method?.contains("RESPONSE CAPTURED") == true -> Color.parseColor("#00695C")
                 entry.isFlagged -> Color.parseColor("#C62828")
                 entry.source == LogSource.JS_OBSERVER -> Color.parseColor("#1565C0")
                 entry.isMainFrame -> Color.parseColor("#2E7D32")

@@ -33,16 +33,49 @@ account. It is **not** an automation or auto-booking tool.
 
 ### Response inspector (RSA availability/timer endpoints only)
 
-For requests whose URL contains `/api/v1/Availability/` or
-`/api/v1/Settings/code/SlotsAvailableTimerInSeconds`, the JS shim also
-inspects the **response** - via `response.clone()` for `fetch()` (the page
-always gets the original, untouched response back) and `responseText` on
-`readystatechange`/DONE for XHR - and reports status, content-type, and body
-back to Android. Every other request is still metadata-only (method/URL/
-timestamp). Kotlin re-validates the URL against the same allow-list before
-storing anything, so a compromised/misbehaving page script can't smuggle
-arbitrary data in under this channel.
+For requests whose URL contains `api/v1/Availability/` or
+`api/v1/Settings/code/SlotsAvailableTimerInSeconds` (covers
+`ClosestSimpleByWorkOrder`, `slots`, `All`, `ByWorkOrderAndTerritory`, and the
+timer endpoint), the JS shim also inspects the **response** and reports
+status, responseURL, content-type, and body back to Android. Every other
+request stays metadata-only (method/URL/timestamp). Kotlin re-validates the
+URL against the same allow-list before storing anything, so a
+compromised/misbehaving page script can't smuggle arbitrary data in under
+this channel.
 
+- **fetch**: wraps `window.fetch`, inspects the response via
+  `response.clone()` after the original promise resolves, and always returns
+  the original, untouched promise to the caller.
+- **XHR**: instruments both `.open()` (stores method/url on the instance) and
+  `.send()` (attaches `load` **and** `readystatechange` listeners, per spec,
+  keyed off the URL captured at `open()` time); on DONE it reads
+  `status`/`responseURL`/`responseType`, using `responseText` for `""`/`text`,
+  `JSON.stringify(response)` for `"json"`, and a best-effort `String(response)`
+  for anything else - never replacing, consuming, or replaying the request or
+  response.
+- **Root cause of the original miss**: the URL marker required a leading `/`,
+  but the RSA SPA's XHR calls use relative URLs (no leading slash), so the
+  match silently always failed even though the separate, unconditional
+  request-logging call still fired - which is exactly why "GET (XHR)" entries
+  showed up while `availabilityResponses` stayed empty. Fixed by dropping the
+  leading slash from the markers.
+- **Diagnostics**: a persistent header line shows
+  `XHR HOOK INSTALLED: YES/NO`, `FETCH HOOK INSTALLED: YES/NO`, and
+  `HOOK INSTALLED AT: [time]`, refreshed on every injection. A matching XHR
+  reaching DONE adds an `XHR RESPONSE CAPTURED` line to the log immediately.
+  If the native layer sees a request matching `Availability/slots` but no
+  matching JS-reported response shows up within 6 seconds, it adds
+  `WARNING: SLOT REQUEST OBSERVED BUT RESPONSE HOOK MISSED IT` so a future
+  timing regression is visible instead of silent.
+- **Injection timing**: the observer script is posted from
+  `shouldInterceptRequest` the moment the main-frame request is seen (earlier
+  than `onPageStarted`), and again from `onPageStarted`/`onPageFinished` as a
+  fallback; `window.__rsaObserverInstalled` makes re-injection a no-op. True
+  guaranteed-before-any-page-script injection needs
+  `WebViewCompat.addDocumentStartJavaScript` (`androidx.webkit`), which isn't
+  fetchable in this sandbox (see build notes below) - the request/response
+  correlation warning above exists specifically to surface it if that gap
+  ever matters in practice.
 - **AVAILABILITY tab**: shows only these captured responses as cards
   (METHOD / STATUS / URL / TIME / pretty-printed JSON response).
 - **Timer detection**: a `SlotsAvailableTimerInSeconds` response shows
