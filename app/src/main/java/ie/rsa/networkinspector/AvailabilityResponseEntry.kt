@@ -197,10 +197,28 @@ data class AvailabilityResponseEntry(
         candidateArrays.filterNot { arrayLooksLikeCentreList(it) }
     }
 
-    /** True for ByWorkOrderAndTerritory/ClosestSimpleByWorkOrder, or any other endpoint whose
-     *  response objects match the real centre-object shape - "similar centre-list endpoints". */
+    /**
+     * The confirmed real schema for Availability/slots: a top-level object with
+     * "slots"/"dates"/"months" arrays (an empty result is literally
+     * {"slots":[],"dates":[],"months":[]}). When present, "slots" is the
+     * authoritative appointment-slot array - never confused with "dates"/"months",
+     * and never with a centre list.
+     */
+    val isSlotsEnvelopeResponse: Boolean by lazy {
+        (topLevelJson as? JSONObject)?.let { it.has("slots") && it.has("dates") && it.has("months") } ?: false
+    }
+
+    private val slotsEnvelopeArray: JSONArray? by lazy {
+        (topLevelJson as? JSONObject)?.optJSONArray("slots")
+    }
+
+    /** True for ByWorkOrderAndTerritory/ClosestSimpleByWorkOrder/All (the confirmed
+     *  centre-list endpoints), or any other endpoint whose response objects match the
+     *  real centre-object shape - "similar centre-list endpoints". The confirmed
+     *  {slots,dates,months} envelope always wins over a URL guess. */
     val isCentreListResponse: Boolean by lazy {
-        isByWorkOrderTerritoryResponse || isClosestWorkOrderResponse || centreArrays.isNotEmpty()
+        if (isSlotsEnvelopeResponse) return@lazy false
+        isByWorkOrderTerritoryResponse || isClosestWorkOrderResponse || isAllAvailabilityResponse || centreArrays.isNotEmpty()
     }
 
     private fun findKeyContaining(obj: JSONObject, hint: String): String? {
@@ -270,6 +288,9 @@ data class AvailabilityResponseEntry(
     val parserStatus: ParserStatus by lazy {
         if (!isAvailabilityFamilyResponse) return@lazy ParserStatus.NOT_APPLICABLE
         if (topLevelJson == null) return@lazy ParserStatus.UNRECOGNIZED_FORMAT
+        // The confirmed {slots,dates,months} envelope is always a recognized result,
+        // even when slots is empty - that IS the real "no availability" response shape.
+        if (isSlotsEnvelopeResponse) return@lazy ParserStatus.PARSED
         if (candidateArrays.isEmpty()) return@lazy ParserStatus.UNRECOGNIZED_FORMAT
         val totalObjectElements = candidateArrays.sumBy { arr -> (0 until arr.length()).count { arr.opt(it) is JSONObject } }
         if (totalObjectElements == 0) return@lazy ParserStatus.PARSED // a genuinely empty list is a real result
@@ -313,7 +334,10 @@ data class AvailabilityResponseEntry(
      */
     private val parsedSlotsInternal: List<DrivingTestSlot> by lazy {
         if (!isAvailabilityFamilyResponse) return@lazy emptyList<DrivingTestSlot>()
-        val best = nonCentreArrays.maxBy { arr -> (0 until arr.length()).count { arr.opt(it) is JSONObject } }
+        // Prefer the confirmed "slots" key from the real {slots,dates,months} envelope over
+        // the generic biggest-array guess, so "dates"/"months" can never be mistaken for it.
+        val best = slotsEnvelopeArray
+            ?: nonCentreArrays.maxBy { arr -> (0 until arr.length()).count { arr.opt(it) is JSONObject } }
             ?: return@lazy emptyList<DrivingTestSlot>()
         val slots = mutableListOf<DrivingTestSlot>()
         for (i in 0 until best.length()) {

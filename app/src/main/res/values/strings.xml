@@ -30,4 +30,8 @@
     <string name="action_copy_availability_json">Copy Sanitized Availability JSON</string>
     <string name="action_export_debug_log">Export Sanitized Debug Log</string>
     <string name="parser_format_changed">RSA response format changed — parser update required</string>
+    <string name="action_test_notification">Test Notification</string>
+    <string name="action_all_centres">ALL CENTRES</string>
+    <string name="action_notifications_on">NOTIFICATIONS: ON</string>
+    <string name="action_notifications_off">NOTIFICATIONS: OFF</string>
 </resources>

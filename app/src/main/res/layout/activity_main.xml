@@ -182,6 +182,30 @@
                 <Button android:id="@+id/exportDebugLogButton" style="?android:attr/buttonStyleSmall"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="@string/action_export_debug_log" />
+                <Button android:id="@+id/testNotificationButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/action_test_notification" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <HorizontalScrollView
+            android:id="@+id/centresControlRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button android:id="@+id/allCentresButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/action_all_centres" />
+                <Button android:id="@+id/notificationsToggleButton" style="?android:attr/buttonStyleSmall"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/action_notifications_on" />
             </LinearLayout>
         </HorizontalScrollView>
 

@@ -62,6 +62,10 @@ class MainActivity : Activity() {
     private lateinit var authTestButton: Button
     private lateinit var copyAvailabilityJsonButton: Button
     private lateinit var exportDebugLogButton: Button
+    private lateinit var testNotificationButton: Button
+    private lateinit var centresControlRow: View
+    private lateinit var allCentresButton: Button
+    private lateinit var notificationsToggleButton: Button
     private lateinit var statusBanner: TextView
     private lateinit var debugPanel: View
     private lateinit var debugText: TextView
@@ -69,7 +73,8 @@ class MainActivity : Activity() {
     private val adapter by lazy { LogAdapter(this) }
     private val availabilityAdapter by lazy { AvailabilityAdapter(this) }
     private val slotAdapter by lazy { SlotAdapter(this) }
-    private val centreAdapter by lazy { CentreAdapter(this) }
+    private val selectedCentresStore by lazy { SelectedCentresStore(this) }
+    private val centreAdapter by lazy { CentreAdapter(this, selectedCentresStore) {} }
     private val slotFingerprintStore by lazy { SlotFingerprintStore(this, "notified_slot_fingerprints") }
     private val centreFingerprintStore by lazy { SlotFingerprintStore(this, "notified_centre_fingerprints") }
     private val allEntries = mutableListOf<LogEntry>()
@@ -156,11 +161,22 @@ class MainActivity : Activity() {
         authTestButton = findViewById(R.id.authTestButton)
         copyAvailabilityJsonButton = findViewById(R.id.copyAvailabilityJsonButton)
         exportDebugLogButton = findViewById(R.id.exportDebugLogButton)
+        testNotificationButton = findViewById(R.id.testNotificationButton)
+        centresControlRow = findViewById(R.id.centresControlRow)
+        allCentresButton = findViewById(R.id.allCentresButton)
+        notificationsToggleButton = findViewById(R.id.notificationsToggleButton)
         statusBanner = findViewById(R.id.statusBanner)
         debugPanel = findViewById(R.id.debugPanel)
         debugText = findViewById(R.id.debugText)
 
         logListView.adapter = adapter
+        refreshNotificationsToggleLabel()
+    }
+
+    private fun refreshNotificationsToggleLabel() {
+        notificationsToggleButton.text = getString(
+            if (selectedCentresStore.notificationsEnabled()) R.string.action_notifications_on else R.string.action_notifications_off
+        )
     }
 
     private fun configureWebView() {
@@ -322,6 +338,15 @@ class MainActivity : Activity() {
         authTestButton.setOnClickListener { showAuthTestInstructions() }
         copyAvailabilityJsonButton.setOnClickListener { copySanitizedAvailabilityJson() }
         exportDebugLogButton.setOnClickListener { exportSanitizedDebugLog() }
+        testNotificationButton.setOnClickListener { NotificationHelper.notifyTest(this) }
+        allCentresButton.setOnClickListener {
+            selectedCentresStore.selectAll()
+            refreshCentreList()
+        }
+        notificationsToggleButton.setOnClickListener {
+            selectedCentresStore.setNotificationsEnabled(!selectedCentresStore.notificationsEnabled())
+            refreshNotificationsToggleLabel()
+        }
 
         searchBox.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -348,6 +373,7 @@ class MainActivity : Activity() {
         currentMode = mode
         filterRow.visibility = if (mode == ViewMode.LOG) View.VISIBLE else View.GONE
         searchBox.visibility = if (mode == ViewMode.LOG) View.VISIBLE else View.GONE
+        centresControlRow.visibility = if (mode == ViewMode.CENTRES) View.VISIBLE else View.GONE
         logListView.visibility = if (mode == ViewMode.DEBUG) View.GONE else View.VISIBLE
         debugPanel.visibility = if (mode == ViewMode.DEBUG) View.VISIBLE else View.GONE
         when (mode) {
@@ -575,9 +601,13 @@ class MainActivity : Activity() {
         refreshDebugText()
     }
 
-    /** Notifies for any parsed slot not already notified about; dedup persists across restarts. */
+    /** Notifies for any parsed slot not already notified about, at a centre the user is
+     *  watching (empty selection = watch all), unless notifications are toggled off.
+     *  Dedup persists across restarts. */
     private fun notifyNewSlots(slots: List<DrivingTestSlot>) {
+        if (!selectedCentresStore.notificationsEnabled()) return
         for (slot in slots) {
+            if (!selectedCentresStore.isSelected(slot.centre)) continue
             if (!slotFingerprintStore.hasNotified(slot.fingerprint)) {
                 NotificationHelper.notifySlotFound(this, slot)
                 slotFingerprintStore.markNotified(slot.fingerprint)
@@ -585,11 +615,13 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Notifies only for centres whose nextAvailability is a genuine (non-sentinel) date;
-     *  dedup key is centre id + nextAvailability, so a later/earlier date re-notifies. */
+    /** Notifies only for watched centres whose nextAvailability is a genuine (non-sentinel)
+     *  date; dedup key is centre id + nextAvailability, so a later/earlier date re-notifies. */
     private fun notifyNewCentres(centres: List<TestCentreStatus>) {
+        if (!selectedCentresStore.notificationsEnabled()) return
         for (centre in centres) {
             if (!centre.hasGenuineDate) continue
+            if (!selectedCentresStore.isSelected(centre.name)) continue
             if (!centreFingerprintStore.hasNotified(centre.fingerprint)) {
                 NotificationHelper.notifyCentreAvailability(this, centre)
                 centreFingerprintStore.markNotified(centre.fingerprint)

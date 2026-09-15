@@ -93,6 +93,15 @@ object NotificationHelper {
         manager.notify(NOTIFICATION_ID_SLOT + centre.fingerprint.hashCode(), notification)
     }
 
+    /** Fires a sample slot-alert notification through the real channel, so the user can
+     *  verify sound/vibration/permission without needing a real slot to appear. */
+    fun notifyTest(context: Context) {
+        notifySlotFound(
+            context,
+            DrivingTestSlot(centre = "Test Centre", date = "Test Date", time = "Test Time")
+        )
+    }
+
     fun notifyLoginRequired(context: Context) {
         if (!canPostNotifications(context)) return
         val openIntent = Intent(context, MainActivity::class.java).apply {
